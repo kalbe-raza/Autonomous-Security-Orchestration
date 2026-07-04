@@ -44,21 +44,12 @@ services:
     environment:
       - N8N_BASIC_AUTH_ACTIVE=false
       - WEBHOOK_URL=http://localhost:5678
-    networks:
-      - security-net
-
-  ollama:
-    image: ollama/ollama
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_data:/root/.ollama
+      - OLLAMA_HOST=http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - security-net
 
 networks:
   security-net:
     driver: bridge
-
-volumes:
-  ollama_data:

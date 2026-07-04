@@ -1,0 +1,164 @@
+{
+  "name": "Security Orchestration Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "security-alert",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-1",
+      "name": "Security Alert Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [100, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.abuseipdb.com/api/v2/check",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "ipAddress",
+              "value": "={{ $('Security Alert Webhook').item.json.attacker_ip }}"
+            },
+            {
+              "name": "maxAgeInDays",
+              "value": "90"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Key",
+              "value": "YOUR_ABUSEIPDB_API_KEY"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "abuseipdb-1",
+      "name": "AbuseIPDB Lookup",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [350, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:11434/api/generate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'llama3.2', prompt: 'You are a cybersecurity analyst. Analyze this attack and respond in exactly this format:\\nSEVERITY: [number 1-10]\\nREASON: [one sentence]\\n\\nIP: ' + $('Security Alert Webhook').item.json.attacker_ip + '\\nReason flagged: ' + $('Security Alert Webhook').item.json.reason + '\\nAbuse Score: ' + $json.data.abuseConfidenceScore + '/100\\nCountry: ' + $json.data.countryCode + '\\nTotal Reports: ' + $json.data.totalReports, stream: false }) }}",
+        "options": {}
+      },
+      "id": "ollama-1",
+      "name": "Ollama AI Analysis",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [600, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.item.json.response || '';\nconst sevMatch = response.match(/SEVERITY:\\s*(\\d+)/i);\nconst reasonMatch = response.match(/REASON:\\s*(.+)/i);\nreturn [{\n  json: {\n    severity: sevMatch ? parseInt(sevMatch[1]) : 5,\n    ai_reason: reasonMatch ? reasonMatch[1].trim() : 'Could not parse AI response',\n    attacker_ip: $('Security Alert Webhook').item.json.attacker_ip,\n    abuse_score: $('AbuseIPDB Lookup').item.json.data.abuseConfidenceScore,\n    country: $('AbuseIPDB Lookup').item.json.data.countryCode,\n    total_reports: $('AbuseIPDB Lookup').item.json.data.totalReports,\n    flagged_reason: $('Security Alert Webhook').item.json.reason,\n    timestamp: $('Security Alert Webhook').item.json.timestamp\n  }\n}];"
+      },
+      "id": "code-1",
+      "name": "Parse Severity",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.severity }}",
+              "operation": "larger",
+              "value2": 6
+            }
+          ]
+        }
+      },
+      "id": "if-1",
+      "name": "Is Malicious?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1100, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://firewall-api:5000/block",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ ip: $json.attacker_ip }) }}",
+        "options": {}
+      },
+      "id": "block-1",
+      "name": "Block IP",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1350, 150]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "YOUR_SLACK_WEBHOOK_URL",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: '*[SECURITY ALERT] IP BLOCKED*\\n*IP:* ' + $json.attacker_ip + '\\n*Country:* ' + $json.country + '\\n*AbuseIPDB Score:* ' + $json.abuse_score + '/100\\n*Total Reports:* ' + $json.total_reports + '\\n*Flagged For:* ' + $json.flagged_reason + '\\n*AI Severity:* ' + $json.severity + '/10\\n*AI Analysis:* ' + $json.ai_reason + '\\n*Action:* Firewall rule applied' }) }}",
+        "options": {}
+      },
+      "id": "slack-1",
+      "name": "Slack Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1350, 450]
+    }
+  ],
+  "connections": {
+    "Security Alert Webhook": {
+      "main": [
+        [{"node": "AbuseIPDB Lookup", "type": "main", "index": 0}]
+      ]
+    },
+    "AbuseIPDB Lookup": {
+      "main": [
+        [{"node": "Ollama AI Analysis", "type": "main", "index": 0}]
+      ]
+    },
+    "Ollama AI Analysis": {
+      "main": [
+        [{"node": "Parse Severity", "type": "main", "index": 0}]
+      ]
+    },
+    "Parse Severity": {
+      "main": [
+        [{"node": "Is Malicious?", "type": "main", "index": 0}]
+      ]
+    },
+    "Is Malicious?": {
+      "main": [
+        [
+          {"node": "Block IP", "type": "main", "index": 0},
+          {"node": "Slack Alert", "type": "main", "index": 0}
+        ],
+        []
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
