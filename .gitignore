@@ -1,0 +1,4 @@
+.env
+*.log
+ollama_data/
+n8n_data/

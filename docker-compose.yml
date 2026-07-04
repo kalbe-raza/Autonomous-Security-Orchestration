@@ -1,0 +1,64 @@
+version: "3.8"
+
+services:
+  nginx:
+    build: ./nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/logs:/var/log/nginx
+    networks:
+      - security-net
+
+  log-watcher:
+    build: ./log-watcher
+    volumes:
+      - ./nginx/logs:/logs:ro
+    env_file:
+      - .env
+    environment:
+      - N8N_WEBHOOK_URL=http://n8n:5678/webhook/security-alert
+    depends_on:
+      - nginx
+      - n8n
+    networks:
+      - security-net
+
+  firewall-api:
+    build: ./firewall-api
+    ports:
+      - "5000:5000"
+    cap_add:
+      - NET_ADMIN
+    networks:
+      - security-net
+
+  n8n:
+    image: n8nio/n8n
+    ports:
+      - "5678:5678"
+    volumes:
+      - ./n8n:/home/node/.n8n
+    env_file:
+      - .env
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=false
+      - WEBHOOK_URL=http://localhost:5678
+    networks:
+      - security-net
+
+  ollama:
+    image: ollama/ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - security-net
+
+networks:
+  security-net:
+    driver: bridge
+
+volumes:
+  ollama_data:
